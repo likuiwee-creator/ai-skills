@@ -1,0 +1,63 @@
+# code-selfcheck CI 模板
+# 用法：复制到项目 .gitlab-ci.yml（或 GitHub Actions），按需调整路径与阈值。
+#
+# 关键设计：本地钩子用 skill/脚本，CI 也调用同一个 selfcheck.cjs，逻辑不分叉。
+# 必须去项目 Settings ▸ Merge requests 打开 "Pipelines must succeed"，
+# 否则流水线失败也拦不住合并。
+
+stages:
+  - fast-gate      # 安全：最快发现高危问题
+  - ai-code-review # AI 审查：仅变更 diff，critical/high 才阻断
+  - unit-test      # 语法 + 单测 + 覆盖率
+
+variables:
+  COVERAGE_LINES: "70"
+  # OCR 云端模型与 key 走 CI/CD ▸ Variables（需 masked），不要写死在仓库里。
+  # 例：OCR_PROVIDER=deepseek ; DEEPSEEK_API_KEY=***
+
+# ---------- 阶段1：安全扫描（高危直接阻断） ----------
+fast-gate:
+  stage: fast-gate
+  image: returntocorp/semgrep          # 官方镜像，自带 semgrep
+  variables:
+    GIT_DEPTH: "0"                      # OCR 需要 git 历史
+  script:
+    - semgrep scan --config auto
+        --severity ERROR --severity WARNING
+        --error --quiet
+        --skip-unknown-extensions
+        --exclude node_modules
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+
+# ---------- 阶段2：AI 代码审查（仅 critical/high 阻断） ----------
+ai-code-review:
+  stage: ai-code-review
+  image: node:22
+  variables:
+    GIT_DEPTH: "0"
+  before_script:
+    - npm i -D @alibaba-group/open-code-review
+    # ocr 需要配置云端 provider，不要指向本地 Ollama（runner 无 Ollama）
+    - npx ocr config set provider ${OCR_PROVIDER}
+  script:
+    - mkdir -p ci && cp -r tools/code-selfcheck/scripts ci/selfcheck
+    - node ci/selfcheck/selfcheck.cjs --only ai
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+  allow_failure: true                   # AI 是辅助；要去掉此行改为强制时，请配合人工复核
+  # 注：ocr_gate 内部默认「OCR 自身失败不冻结合并」。
+  #     若要求审查必须成功，设变量 OCR_INFRA_FAILS_PIPELINE=true。
+
+# ---------- 阶段3：语法 + 单测 + 覆盖率 ----------
+unit-test:
+  stage: unit-test
+  image: node:22
+  before_script:
+    - npm i -D c8 || true
+  script:
+    - mkdir -p ci && cp -r tools/code-selfcheck/scripts ci/selfcheck
+    - node ci/selfcheck/selfcheck.cjs --only syntax,test,coverage
+  coverage: '/Lines\s*:\s*(\d+\.\d+)\s*%/'
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
