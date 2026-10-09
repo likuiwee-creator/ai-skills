@@ -10,9 +10,14 @@
 ## 安装（同事 / 换机）
 
 ```bash
-git clone <本仓库地址> ~/ai-skills
+git clone git@github.com:likuiwee-creator/ai-skills.git ~/ai-skills
+cd ~/ai-skills && sh sync.sh          # 一键安装全部 14 个
+```
 
-# 全量安装
+手动安装方式：
+
+```bash
+# 全量
 cp -r ~/ai-skills/* ~/.workbuddy/skills/
 
 # 或只装需要的（macOS/Linux）
